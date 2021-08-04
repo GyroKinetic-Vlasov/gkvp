@@ -51,7 +51,7 @@ PROGRAM GKV_main
   use GKV_fft,   only: fft_pre
   use GKV_freq,  only: freq_set, freq_conv
   use GKV_tips,  only: tips_flush
-  use GKV_shearflow,  only: shearflow_kxmap
+  use GKV_shearflow,  only: shearflow_kxmap, shearflow_lagrange_remesh
 
   implicit none
 
@@ -137,17 +137,18 @@ PROGRAM GKV_main
       end if
 
       if (gamma_e /= 0._DP) then
-        call shearflow_kxmap( time, ff, phi, Al, hh )
-        if (time > tlim_exb - eps .AND. cflg == 0 ) then 
-          write( olog, * ) ""
-          write( olog, * ) " ########## CAUTION! ############"
-          write( olog, * ) " # time variable exceeds the time-limit: tlim_exb = ", tlim_exb
-          write( olog, * ) " # --> GKV is still running, but you need to check the results after tlim_exb."
-          write( olog, * ) " ########## CAUTION! ############"
-          write( olog, * ) ""
-          cflg = 1
-          !!! exit 
-        end if
+        !call shearflow_kxmap( time, ff, phi, Al, hh )
+        !if (time > tlim_exb - eps .AND. cflg == 0 ) then 
+        !  write( olog, * ) ""
+        !  write( olog, * ) " ########## CAUTION! ############"
+        !  write( olog, * ) " # time variable exceeds the time-limit: tlim_exb = ", tlim_exb
+        !  write( olog, * ) " # --> GKV is still running, but you need to check the results after tlim_exb."
+        !  write( olog, * ) " ########## CAUTION! ############"
+        !  write( olog, * ) ""
+        !  cflg = 1
+        !  !!! exit 
+        !end if
+        call shearflow_lagrange_remesh(time,ff,phi,Al,hh) !%%% For shearflow_lagrange
       end if
 
                                            call clock_sta(10)

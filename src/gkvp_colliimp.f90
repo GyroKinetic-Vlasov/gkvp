@@ -51,7 +51,8 @@ MODULE GKV_colliimp
   real(kind=DP), parameter :: res_error_max = 1.d-12
 
   public   colliimp_set_param, colliimp_colli, colliimp_calc_colli_full, &
-           gvl, gvp, gnu_ds, gnu_ps, gnu_hs, gnu_gs
+           gvl, gvp, gnu_ds, gnu_ps, gnu_hs, gnu_gs, &
+           nbuff, gmu, gj0, gj1 !%%% For shearflow_lagrange
 
 
 CONTAINS

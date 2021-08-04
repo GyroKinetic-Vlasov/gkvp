@@ -59,8 +59,8 @@ gkvp:	$(SRC)gkvp_header.f90\
 	$(SRC)gkvp_zfilter.f90\
 	$(SRC)gkvp_exb.f90\
 	$(SRC)gkvp_trans.f90\
-	$(SRC)gkvp_advnc.f90\
 	$(SRC)gkvp_shearflow.f90\
+	$(SRC)gkvp_advnc.f90\
 	$(SRC)gkvp_dtc.f90\
 	$(SRC)gkvp_out.f90\
 	$(SRC)gkvp_set.f90\
@@ -84,8 +84,8 @@ gkvp:	$(SRC)gkvp_header.f90\
 	$(FC) $(FFLAGS) -c $(SRC)gkvp_zfilter.f90
 	$(FC) $(FFLAGS) -c $(SRC)gkvp_exb.f90
 	$(FC) $(FFLAGS) -c $(SRC)gkvp_trans.f90
-	$(FC) $(FFLAGS) -c $(SRC)gkvp_advnc.f90
 	$(FC) $(FFLAGS) -c $(SRC)gkvp_shearflow.f90
+	$(FC) $(FFLAGS) -c $(SRC)gkvp_advnc.f90
 	$(FC) $(FFLAGS) -c $(SRC)gkvp_dtc.f90
 	$(FC) $(FFLAGS) -c $(SRC)gkvp_out.f90
 	$(FC) $(FFLAGS) -c $(SRC)gkvp_set.f90
@@ -110,8 +110,8 @@ gkvp:	$(SRC)gkvp_header.f90\
 			gkvp_zfilter.o\
 			gkvp_exb.o\
 			gkvp_trans.o\
-			gkvp_advnc.o\
 			gkvp_shearflow.o\
+			gkvp_advnc.o\
 			gkvp_dtc.o\
 			gkvp_out.o\
 			gkvp_set.o\

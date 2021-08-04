@@ -22,6 +22,8 @@ MODULE GKV_advnc
   use GKV_clock, only: clock_sta, clock_end
   use GKV_zfilter, only: zfilter
   use GKV_tips,  only: tips_reality
+  use GKV_shearflow, only: shearflow_lagrange_update, &
+                           shearflow_lagrange_dealias, kx_lagrange
 
   implicit none
 
@@ -57,7 +59,7 @@ CONTAINS
     data iflg / 0 /
 !$  integer :: nthreads, omp_get_num_threads
 
-      if ( iflg == 0 ) then
+!      if ( iflg == 0 ) then
         iflg = 1
 !$OMP parallel
         do im = 0, nm
@@ -85,13 +87,17 @@ CONTAINS
 !$    end if
 !$OMP end master
 !$OMP end parallel
-      end if
+!      end if
 
       allocate( dh(-nx:nx,0:ny,-nz:nz-1,1:2*nv,0:nm) )
       allocate( cf(-nx:nx,0:ny,-nz:nz-1,1:2*nv,0:nm) )
       allocate( ef(-nx:nx,0:ny,-nz:nz-1,1:2*nv,0:nm) )
 
       do istep = 1, 4
+
+        if (istep == 2 .or. istep == 4) then          !%%% For shearflow_lagrange
+          call shearflow_lagrange_update(0.5_DP * dt) !%%% For shearflow_lagrange
+        end if                                        !%%% For shearflow_lagrange
 
         call caldlt_rev( colliflag, ff, phi, Al, hh, dh, cf, ef )
 
@@ -102,6 +108,8 @@ CONTAINS
                                            call clock_end(11)
 
         call tips_reality ( hh )
+
+        call shearflow_lagrange_dealias(ff, phi, Al, hh) !%%% For shearflow_lagrange
 
                                            call clock_sta(12)
                                          ! call fapp_start("esfield",12,1)
@@ -445,7 +453,8 @@ CONTAINS
           do iz = -nz, nz-1
             do my = ist_y, iend_y
               do mx = -nx, nx
-                kvd = kx(mx) * vdx(iz,iv,im) + ky(my) * vdy(iz,iv,im)
+                !kvd = kx(mx) * vdx(iz,iv,im) + ky(my) * vdy(iz,iv,im)
+                kvd = kx_lagrange(mx,my) * vdx(iz,iv,im) + ky(my) * vdy(iz,iv,im) !%%% For shearflow_lagrange
                 kvs = ky(my) * vsy(iz,iv,im)
                 lf(mx,my,iz,iv,im) =                  &
                    - ui * kvd * ff(mx,my,iz,iv,im)    &

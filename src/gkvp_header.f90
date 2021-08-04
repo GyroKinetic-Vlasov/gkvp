@@ -152,6 +152,7 @@ MODULE GKV_header
   real(kind=DP), dimension(-nz:nz-1,0:nm)   :: vp, mir
   real(kind=DP), dimension(-nz:nz-1)        :: dvp
   real(kind=DP), dimension(-nz:nz-1)        :: dpara, rootg
+  real(kind=DP), dimension(1:3,1:3,-nz:nz-1) :: gg_g !%%% For shearflow_lagrange
 
   complex(kind=DP), dimension(0:ny)         :: ck
   integer, dimension(0:ny)                  :: dj

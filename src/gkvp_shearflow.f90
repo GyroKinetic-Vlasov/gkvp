@@ -14,14 +14,33 @@ MODULE GKV_shearflow
 
   use GKV_header
   use GKV_mpienv
+  use GKV_math,   only: math_j0, math_j1, math_j2, math_g0, math_random
+  use GKV_intgrl, only: intgrl_fsrf, intgrl_v0_moment_ms
   use GKV_fld,    only: fld_esfield, fld_emfield_ff, fld_ff2hh
   use GKV_tips,  only: tips_reality
+  use GKV_colliimp, only: nbuff, gmu, gj0, gj1
 
   implicit none
 
   private
 
-  public   shearflow_kxmap
+  public   shearflow_kxmap, &
+           shearflow_lagrange_init, shearflow_lagrange_update,    &
+           shearflow_lagrange_remesh, shearflow_lagrange_dealias, &
+           kx_lagrange, gkx_lagrange
+           
+  !%%% - Definition
+  !%%%   kx: radial wavenumber in moving frame and remesh
+  !%%%   kx_lagrange: radial wavenumber in lab frame
+  !%%% - j0, j1, j2, g0, ksq, fct_poisson, fct_e_energy, 
+  !%%%   fct_ampere, fct_m_energy, fctgt in gkvp_header.f90 are 
+  !%%%   kx-dependent geometric quantities in lab frame, updated in this module.
+  real(kind=DP), dimension(-nx:nx,0:ny) :: kx_lagrange
+  real(kind=DP), dimension(-nx:nx,0:global_ny) :: gkx_lagrange
+
+  real(kind=DP), dimension(0:global_ny) :: gky
+  real(kind=DP) :: dt_remesh, t_remesh
+  real(kind=DP), dimension(0:ny) :: mx_dealias_left, mx_dealias_right
 
 
 CONTAINS
@@ -145,5 +164,494 @@ CONTAINS
       end if
 
   END SUBROUTINE shearflow_kxmap
+
+
+!--------------------------------------
+  SUBROUTINE shearflow_lagrange_init(time)
+!--------------------------------------
+  
+    real(kind=DP), intent(in) :: time
+    integer :: my, gmy, num_remesh
+
+      dt_remesh = kxmin_g / kymin_g / gamma_e
+      num_remesh = int((time + 0.5_DP*dt_remesh + eps)/dt_remesh)
+      t_remesh  = ( 0.5d0 + num_remesh ) * dt_remesh - eps
+
+      do my = ist_y, iend_y
+        ! kx: radial wavenumber in moving frame & remesh
+        ! kx_lagrange: radial wavenumber in lab frame
+        kx_lagrange(:,my) = kx(:)                   &
+                          - ky(my) * gamma_e * time &
+                          + ky(my) * kxmin_g / kymin_g * num_remesh
+      end do
+      call shearflow_lagrange_kxdep_geometry
+  
+      do my = ist_y, iend_y
+        gmy = my + (ny+1)*rankw
+        mx_dealias_left(my) = -nx+0.5*gmy-1                     &
+                            + ky(my) * gamma_e * time / kxmin_g &
+                            - ky(my) / kymin_g * num_remesh
+        mx_dealias_right(my) = nx-0.5*gmy+1                      &
+                             + ky(my) * gamma_e * time / kxmin_g &
+                             - ky(my) / kymin_g * num_remesh
+      end do
+
+!--- For exb_NL_term
+      do my = 0, global_ny
+        gky(my) = kymin_g * real(my, kind=DP)
+        gkx_lagrange(:,my) = kx(:)                    &
+                           - gky(my) * gamma_e * time &
+                           + gky(my) * kxmin_g / kymin_g * num_remesh
+      end do
+
+
+  END SUBROUTINE shearflow_lagrange_init
+  
+  
+!--------------------------------------
+  SUBROUTINE shearflow_lagrange_update(dt_shear)
+!--------------------------------------
+  
+    real(kind=DP), intent(in) :: dt_shear
+    integer :: my
+  
+      do my = ist_y, iend_y
+        kx_lagrange(:,my) = kx_lagrange(:,my) - ky(my) * gamma_e * dt_shear
+      end do
+      call shearflow_lagrange_kxdep_geometry
+  
+      do my = ist_y, iend_y
+        mx_dealias_left(my) = mx_dealias_left(my) + ky(my) * gamma_e * dt_shear / kxmin_g
+        mx_dealias_right(my) = mx_dealias_right(my) + ky(my) * gamma_e * dt_shear / kxmin_g
+      end do
+  
+!--- For exb_NL_term
+      do my = 0, global_ny
+        gkx_lagrange(:,my) = gkx_lagrange(:,my) - gky(my) * gamma_e * dt_shear
+      end do
+
+  END SUBROUTINE shearflow_lagrange_update
+
+
+!--------------------------------------
+  SUBROUTINE shearflow_lagrange_kxdep_geometry
+!--------------------------------------
+! - j0, j1, j2, g0, ksq, fct_poisson, fct_e_energy, 
+!   fct_ampere, fct_m_energy, fctgt in gkvp_header.f90 are 
+!   kx-dependent geometric quantities in lab frame, updated in this module.
+
+    complex(kind=DP), dimension(:,:,:,:,:), allocatable :: wf
+    complex(kind=DP), dimension(:,:,:), allocatable :: nw
+    real(kind=DP), dimension(:,:,:), allocatable :: ww
+    real(kind=DP) :: gg0, bb, kmo, cfsrf_l
+    integer :: mx, my, iz, iv, im, is
+    integer :: ibuff, mxy
+ 
+!$OMP parallel do default(none) &
+!$OMP shared(ist_y,iend_y,ksq,kx_lagrange,gg_g,ky) &
+!$OMP private(mx,my,iz)
+      do iz = -nz, nz-1 
+        do my = ist_y, iend_y
+          do mx = -nx, nx
+            ksq(mx,my,iz) = (kx_lagrange(mx,my)**2)*gg_g(1,1,iz)         &
+                          + 2._DP*kx_lagrange(mx,my)*ky(my)*gg_g(1,2,iz) &
+                          + (ky(my)**2)*gg_g(2,2,iz)
+          end do
+        end do
+      end do
+  
+!$OMP parallel do collapse(2) default(none) &
+!$OMP shared(ist_y,iend_y,ranks,ksq,mu,omg,tau,Anum,Znum,j0,j1,j2) &
+!$OMP private(mx,my,iz,im,kmo)
+      do im = 0, nm
+        do iz = -nz, nz-1 
+          do my = ist_y, iend_y
+            do mx = -nx, nx
+              kmo           = sqrt( 2._DP * ksq(mx,my,iz) * mu(im) / omg(iz) ) &
+                             * dsqrt( tau(ranks)*Anum(ranks) ) / Znum(ranks)
+              call math_j0( kmo, j0(mx,my,iz,im) )
+              call math_j1( kmo, j1(mx,my,iz,im) )
+              call math_j2( kmo, j2(mx,my,iz,im) )
+            end do
+          end do
+        end do
+      end do
+  
+!$OMP parallel do default(none) &
+!$OMP shared(ist_y,iend_y,ranks,ksq,omg,tau,Anum,Znum,g0) &
+!$OMP private(mx,my,iz,bb)
+      do iz = -nz, nz-1 
+        do my = ist_y, iend_y
+          do mx = -nx, nx
+            bb     = ksq(mx,my,iz) / omg(iz)**2 &
+                      * tau(ranks)*Anum(ranks)/(Znum(ranks)**2)
+            call math_g0( bb, g0(mx,my,iz) )
+          end do
+        end do
+      end do
+
+! --- GK polarization factor for efield calculation 
+      allocate( ww(-nx:nx,0:ny,-nz:nz-1) )
+!$OMP parallel default(none) &
+!$OMP shared(ist_y,iend_y,rankw,lambda_i,ksq,omg,tau,Anum,Znum,fcs,ww,fct_poisson,fct_e_energy) &
+!$OMP private(mx,my,iz,is,bb,gg0)
+!$OMP workshare
+      ww(:,:,:) = 0._DP
+      fct_poisson(:,:,:) = 0._DP
+      fct_e_energy(:,:,:) = 0._DP
+!$OMP end workshare
+!$OMP do
+      do iz = -nz, nz-1
+        do my = ist_y, iend_y
+          do mx = -nx, nx
+            if ( rankw == 0 .and. mx == 0 .and. my == 0 ) then !- (0,0) mode
+              fct_poisson(mx,my,iz) = 0._DP
+              fct_e_energy(mx,my,iz) = 0._DP
+            else
+              ww(mx,my,iz) = lambda_i * ksq(mx,my,iz)
+              do is = 0, ns-1
+                bb   = ksq(mx,my,iz) / omg(iz)**2 &
+                        * tau(is)*Anum(is)/(Znum(is)**2)
+                call math_g0( bb, gg0 )
+                ww(mx,my,iz) = ww(mx,my,iz)  &
+                             + Znum(is) * fcs(is) / tau(is) * ( 1._DP - gg0 )
+              end do
+              fct_poisson(mx,my,iz) = 1._DP / ww(mx,my,iz)
+              fct_e_energy(mx,my,iz) = ww(mx,my,iz)
+            end if
+          end do
+        end do
+      end do
+!$OMP end do nowait
+!$OMP end parallel
+
+! --- ZF-factor for adiabatic model
+      if ( ns == 1 ) then
+!$OMP parallel workshare
+        ww(:,:,:) = 0._DP
+!$OMP end parallel workshare
+        do iz = -nz, nz-1
+          my = 0
+            do mx = -nx, nx
+              ww(mx,my,iz) = ( 1._DP - g0(mx,my,iz) )       &
+                           / ( 1._DP - g0(mx,my,iz) + tau(0)*tau_ad )
+            end do
+        end do
+        call intgrl_fsrf ( ww, fctgt )
+        if ( rankw == 0 )  then
+          fctgt(0)   = ( 1._DP - g0(0,0,0) ) / ( 1._DP - g0(0,0,0) + tau(0)*tau_ad )
+                                            ! g0(0,0,iz) has no z dependence
+        endif
+      endif
+      deallocate( ww )
+
+! --- GK polarization factor for mfield calculation 
+      allocate( wf(-nx:nx,0:ny,-nz:nz-1,1:2*nv,0:nm) )
+      allocate( nw(-nx:nx,0:ny,-nz:nz-1) )
+!$OMP parallel workshare
+      wf(:,:,:,:,:) = ( 0._DP, 0._DP )
+      nw(:,:,:) = ( 0._DP, 0._DP )
+      fct_ampere(:,:,:) = 0._DP
+      fct_m_energy(:,:,:) = 0._DP
+!$OMP end parallel workshare
+      if ( beta .ne. 0._DP ) then
+!$OMP parallel do collapse(2) default(none) &
+!$OMP shared(ist_y,iend_y,ranks,Znum,fcs,Anum,vl,j0,fmx,wf) &
+!$OMP private(mx,my,iz,iv,im)
+        do im = 0, nm
+          do iv = 1, 2*nv
+            do iz = -nz, nz-1
+              do my = ist_y, iend_y
+                do mx = -nx, nx
+                  wf(mx,my,iz,iv,im) = Znum(ranks) * fcs(ranks) / Anum(ranks)  &
+                                     * vl(iv)**2 * j0(mx,my,iz,im)**2 * fmx(iz,iv,im)
+                end do
+              end do
+            end do
+          end do
+        end do
+        call intgrl_v0_moment_ms ( wf, nw )
+!$OMP parallel do default(none) &
+!$OMP shared(ist_y,iend_y,ksq,beta,nw,fct_ampere,fct_m_energy) &
+!$OMP private(mx,my,iz)
+        do iz = -nz, nz-1
+          do my = ist_y, iend_y
+            do mx = -nx, nx
+              fct_ampere(mx,my,iz) = 1._DP / real( ksq(mx,my,iz) + beta * nw(mx,my,iz), kind=DP )
+              fct_m_energy(mx,my,iz) = ksq(mx,my,iz) / beta
+            end do
+          end do
+        end do
+        if ( rankw == 0 ) then
+          do iz = -nz, nz-1
+            fct_ampere(0,0,iz) = 0._DP
+            fct_m_energy(0,0,iz) = 0._DP
+          end do
+        end if
+      end if
+      deallocate( wf )
+      deallocate( nw )
+
+!--- Bessel functions for colliimp module ---
+!$OMP parallel do default(none) &
+!$OMP shared(ist_y,iend_y,spc_rank,ksq,gmu,omg,tau,Anum,Znum,gj0,gj1) &
+!$OMP private(mx,my,iz,is,im,mxy,ibuff,kmo)
+      do ibuff = 0, nbuff-1
+        mxy = ibuff + nbuff * spc_rank
+        if (mxy <= (2*nx+1)*(ny+1)-1) then
+          mx = mod(mxy,2*nx+1) - nx
+          my = mxy / (2*nx+1)
+          do iz = -nz, nz-1
+            do is = 0, ns-1
+              do im = 0, global_nm
+                kmo = sqrt( 2._DP * ksq(mx,my,iz) * gmu(im) / omg(iz) ) &
+                    * sqrt( tau(is)*Anum(is) ) / Znum(is)
+                call math_j0( kmo, gj0(im,is,iz,ibuff) )
+                call math_j1( kmo, gj1(im,is,iz,ibuff) )
+              end do
+            end do
+          end do
+        else
+          gj0(:,:,:,ibuff) = 0._DP
+          gj1(:,:,:,ibuff) = 0._DP
+        end if
+      end do
+
+  END SUBROUTINE shearflow_lagrange_kxdep_geometry
+
+  
+!--------------------------------------
+  SUBROUTINE shearflow_lagrange_remesh(time,ff,phi,Al,hh)
+!--------------------------------------
+  
+    real(kind=DP), intent(in) :: time
+    complex(kind=DP), intent(inout), &
+      dimension(-nx:nx,0:ny,-nz-nzb:nz-1+nzb,1-nvb:2*nv+nvb,0-nvb:nm+nvb) :: ff
+    complex(kind=DP), intent(inout), &
+      dimension(-nx:nx,0:ny,-nz:nz-1)                       :: phi, Al
+    complex(kind=DP), intent(inout), &
+      dimension(-nx:nx,0:ny,-nz:nz-1,1:2*nv,0:nm)           :: hh
+    integer :: mx, my, gmy, iz, iv, im
+  
+      if (time > t_remesh) then
+        if (rankg==0) write(*,*) "remesh,t=",time,t_remesh
+
+        do my = ist_y, iend_y
+          gmy = my + (ny+1)*rankw
+          if (gmy == 0) then
+            !ff(-nx:nx,my,:,:,:) = ff(-nx:nx,my,:,:,:)
+            !hh(-nx:nx,my,:,:,:) = hh(-nx:nx,my,:,:,:)
+            !phi(-nx:nx,my,:) = phi(-nx:nx,my,:)
+            !Al(-nx:nx,my,:) = Al(-nx:nx,my,:)
+          else if (gmy <= 2*nx) then
+            if (gamma_e > 0._DP) then
+!$OMP parallel default(none) &
+!$OMP shared(my,gmy,ff,hh) &
+!$OMP private(iz,iv,im)
+!$OMP do collapse(2)
+              do im = 0-nvb, nm+nvb
+                do iv = 1-nvb, 2*nv+nvb
+                  do iz = -nz-nzb, nz-1+nzb
+                    ff(-nx:nx-gmy,my,iz,iv,im) = ff(-nx+gmy:nx,my,iz,iv,im)
+                    ff(nx-gmy+1:nx,my,iz,iv,im) = (0._DP, 0._DP)
+                  end do
+                end do
+              end do
+!$OMP end do nowait
+!$OMP do collapse(2)
+              do im = 0, nm
+                do iv = 1, 2*nv
+                  do iz = -nz, nz-1
+                    hh(-nx:nx-gmy,my,iz,iv,im) = hh(-nx+gmy:nx,my,iz,iv,im)
+                    hh(nx-gmy+1:nx,my,iz,iv,im) = (0._DP, 0._DP)
+                  end do
+                end do
+              end do
+!$OMP end do nowait
+!$OMP end parallel
+              phi(-nx:nx-gmy,my,:) = phi(-nx+gmy:nx,my,:)
+              phi(nx-gmy+1:nx,my,:) = (0._DP, 0._DP)
+              Al(-nx:nx-gmy,my,:) = Al(-nx+gmy:nx,my,:)
+              Al(nx-gmy+1:nx,my,:) = (0._DP, 0._DP)
+            else
+!$OMP parallel default(none) &
+!$OMP shared(my,gmy,ff,hh) &
+!$OMP private(iz,iv,im)
+!$OMP do collapse(2)
+              do im = 0-nvb, nm+nvb
+                do iv = 1-nvb, 2*nv+nvb
+                  do iz = -nz-nzb, nz-1+nzb
+                    ff(-nx+gmy:nx,my,iz,iv,im) = ff(-nx:nx-gmy,my,iz,iv,im)
+                    ff(-nx:-nx+gmy-1,my,iz,iv,im) = (0._DP, 0._DP)
+                  end do
+                end do
+              end do
+!$OMP end do nowait
+!$OMP do collapse(2)
+              do im = 0, nm
+                do iv = 1, 2*nv
+                  do iz = -nz, nz-1
+                    hh(-nx+gmy:nx,my,iz,iv,im) = hh(-nx:nx-gmy,my,iz,iv,im)
+                    hh(-nx:-nx+gmy-1,my,iz,iv,im) = (0._DP, 0._DP)
+                  end do
+                end do
+              end do
+!$OMP end do nowait
+!$OMP end parallel
+              phi(-nx+gmy:nx,my,:) = phi(-nx:nx-gmy,my,:)
+              phi(-nx:-nx+gmy-1,my,:) = (0._DP, 0._DP)
+              Al(-nx+gmy:nx,my,:) = Al(-nx:nx-gmy,my,:)
+              Al(-nx:-nx+gmy-1,my,:) = (0._DP, 0._DP)
+            end if
+          else
+!$OMP parallel default(none) &
+!$OMP shared(my,gmy,ff,hh) &
+!$OMP private(iz,iv,im)
+!$OMP do collapse(2)
+              do im = 0-nvb, nm+nvb
+                do iv = 1-nvb, 2*nv+nvb
+                  do iz = -nz-nzb, nz-1+nzb
+                    ff(:,my,iz,iv,im) = (0._DP, 0._DP)
+                  end do
+                end do
+              end do
+!$OMP end do nowait
+!$OMP do collapse(2)
+              do im = 0, nm
+                do iv = 1, 2*nv
+                  do iz = -nz, nz-1
+                    hh(:,my,iz,iv,im) = (0._DP, 0._DP)
+                  end do
+                end do
+              end do
+!$OMP end do nowait
+!$OMP end parallel
+            phi(:,my,:) = (0._DP, 0._DP)
+            Al(:,my,:) = (0._DP, 0._DP)
+          end if
+        end do
+  
+        do my = ist_y, iend_y
+          kx_lagrange(:,my) = kx_lagrange(:,my) + ky(my) * kxmin_g / kymin_g
+        end do
+        call shearflow_lagrange_kxdep_geometry
+  
+        do my = ist_y, iend_y
+          mx_dealias_left(my) = mx_dealias_left(my) - ky(my) / kymin_g
+          mx_dealias_right(my) = mx_dealias_right(my) - ky(my) / kymin_g
+        end do
+
+!--- For exb_NL_term
+        do my = 0, global_ny
+          gkx_lagrange(:,my) = gkx_lagrange(:,my) + gky(my) * kxmin_g / kymin_g
+        end do
+
+        t_remesh = t_remesh + dt_remesh
+      
+      end if
+  
+  END SUBROUTINE shearflow_lagrange_remesh
+  
+  
+!--------------------------------------
+  SUBROUTINE shearflow_lagrange_dealias(ff,phi,Al,hh)
+!--------------------------------------
+  
+    complex(kind=DP), intent(inout), &
+      dimension(-nx:nx,0:ny,-nz-nzb:nz-1+nzb,1-nvb:2*nv+nvb,0-nvb:nm+nvb) :: ff
+    complex(kind=DP), intent(inout), &
+      dimension(-nx:nx,0:ny,-nz:nz-1)                       :: phi, Al
+    complex(kind=DP), intent(inout), &
+      dimension(-nx:nx,0:ny,-nz:nz-1,1:2*nv,0:nm)           :: hh
+    integer :: my, gmy, iz, iv, im, mxl(0:ny), mxr(0:ny)
+  
+      mxl(:) = int(mx_dealias_left(:)) - 1
+      mxr(:) = int(mx_dealias_right(:)) + 1
+      do my = ist_y, iend_y
+        gmy = my + (ny+1)*rankw
+        !write(*,*) mxl(my), mx_dealias_left(my), mxr(my), mx_dealias_right(my)
+        if (gmy <= nx) then
+          if (-nx <= mxl(my)) then
+!$OMP parallel default(none) &
+!$OMP shared(my,mxl,ff,hh) &
+!$OMP private(iz,iv,im)
+!$OMP do collapse(2)
+              do im = 0-nvb, nm+nvb
+                do iv = 1-nvb, 2*nv+nvb
+                  do iz = -nz-nzb, nz-1+nzb
+                    ff(-nx:mxl(my),my,iz,iv,im) = (0._DP, 0._DP)
+                  end do
+                end do
+              end do
+!$OMP end do nowait
+!$OMP do collapse(2)
+              do im = 0, nm
+                do iv = 1, 2*nv
+                  do iz = -nz, nz-1
+                    hh(-nx:mxl(my),my,iz,iv,im) = (0._DP, 0._DP)
+                  end do
+                end do
+              end do
+!$OMP end do nowait
+!$OMP end parallel
+            phi(-nx:mxl(my),my,:) = (0._DP, 0._DP)
+            Al(-nx:mxl(my),my,:) = (0._DP, 0._DP)
+          end if
+          if (mxr(my) <= nx) then
+!$OMP parallel default(none) &
+!$OMP shared(my,mxr,ff,hh) &
+!$OMP private(iz,iv,im)
+!$OMP do collapse(2)
+              do im = 0-nvb, nm+nvb
+                do iv = 1-nvb, 2*nv+nvb
+                  do iz = -nz-nzb, nz-1+nzb
+                    ff(mxr(my):nx,my,iz,iv,im) = (0._DP, 0._DP)
+                  end do
+                end do
+              end do
+!$OMP end do nowait
+!$OMP do collapse(2)
+              do im = 0, nm
+                do iv = 1, 2*nv
+                  do iz = -nz, nz-1
+                    hh(mxr(my):nx,my,iz,iv,im) = (0._DP, 0._DP)
+                  end do
+                end do
+              end do
+!$OMP end do nowait
+!$OMP end parallel
+            phi(mxr(my):nx,my,:) = (0._DP, 0._DP)
+            Al(mxr(my):nx,my,:) = (0._DP, 0._DP)
+          end if
+        else
+!$OMP parallel default(none) &
+!$OMP shared(my,ff,hh) &
+!$OMP private(iz,iv,im)
+!$OMP do collapse(2)
+              do im = 0-nvb, nm+nvb
+                do iv = 1-nvb, 2*nv+nvb
+                  do iz = -nz-nzb, nz-1+nzb
+                    ff(:,my,:,:,:) = (0._DP, 0._DP)
+                  end do
+                end do
+              end do
+!$OMP end do nowait
+!$OMP do collapse(2)
+              do im = 0, nm
+                do iv = 1, 2*nv
+                  do iz = -nz, nz-1
+                    hh(:,my,:,:,:) = (0._DP, 0._DP)
+                  end do
+                end do
+              end do
+!$OMP end do nowait
+!$OMP end parallel
+            phi(:,my,:) = (0._DP, 0._DP)
+            Al(:,my,:) = (0._DP, 0._DP)
+        end if
+      end do
+  
+  END SUBROUTINE shearflow_lagrange_dealias
+
 
 END MODULE GKV_shearflow

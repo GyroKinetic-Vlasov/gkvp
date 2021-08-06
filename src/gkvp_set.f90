@@ -39,7 +39,8 @@ MODULE GKV_set
   !fj start 202010
   use GKV_fileio
   !fj end 202010
-  use GKV_shearflow, only: shearflow_lagrange_init !call after reading "time"
+  use GKV_shearflow, only: shearflow_lagrange_init, & !call after reading "time"
+                           shearflow_running_init !call after reading "time"
 
   implicit none
 
@@ -1807,6 +1808,8 @@ CONTAINS
         gg_g(2,1,:) = gg_g(1,2,:)    !%%% For shearflow_lagrange
         gg_g(3,1,:) = gg_g(1,3,:)    !%%% For shearflow_lagrange
         gg_g(3,2,:) = gg_g(2,3,:)    !%%% For shearflow_lagrange
+        s_hat_g = s_hat              !%%% For shearflow_lagrange->running
+        eps_r_g = eps_r              !%%% For shearflow_lagrange->running
 
         write( olog, * ) " # Collision parameters"
         write( olog, * ) ""
@@ -1981,7 +1984,8 @@ CONTAINS
       end if
 
       if (gamma_e /= 0._DP) then           !%%% For shearflow_lagrange
-        call shearflow_lagrange_init(time) !%%% For shearflow_lagrange
+        !!!call shearflow_lagrange_init(time) !%%% For shearflow_lagrange
+        call shearflow_running_init(time) !%%% For shearflow_lagrange->running
       end if                               !%%% For shearflow_lagrange
 
       call bndry_zvm_bound_f( ff )

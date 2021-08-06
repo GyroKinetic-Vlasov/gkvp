@@ -51,7 +51,8 @@ PROGRAM GKV_main
   use GKV_fft,   only: fft_pre
   use GKV_freq,  only: freq_set, freq_conv
   use GKV_tips,  only: tips_flush
-  use GKV_shearflow,  only: shearflow_kxmap, shearflow_lagrange_remesh
+  use GKV_shearflow,  only: shearflow_kxmap, shearflow_lagrange_remesh, &
+                            shearflow_running_lap
 
   implicit none
 
@@ -148,7 +149,8 @@ PROGRAM GKV_main
         !  cflg = 1
         !  !!! exit 
         !end if
-        call shearflow_lagrange_remesh(time,ff,phi,Al,hh) !%%% For shearflow_lagrange
+        !!!call shearflow_lagrange_remesh(time,ff,phi,Al,hh) !%%% For shearflow_lagrange
+        call shearflow_running_lap(time)                     !%%% For shearflow_lagrange->running
       end if
 
                                            call clock_sta(10)

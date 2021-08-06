@@ -23,7 +23,8 @@ MODULE GKV_advnc
   use GKV_zfilter, only: zfilter
   use GKV_tips,  only: tips_reality
   use GKV_shearflow, only: shearflow_lagrange_update, &
-                           shearflow_lagrange_dealias, kx_lagrange
+                           shearflow_lagrange_dealias, kx_lagrange, &
+                           shearflow_running_update
 
   implicit none
 
@@ -96,7 +97,8 @@ CONTAINS
       do istep = 1, 4
 
         if (istep == 2 .or. istep == 4) then          !%%% For shearflow_lagrange
-          call shearflow_lagrange_update(0.5_DP * dt) !%%% For shearflow_lagrange
+          !!!call shearflow_lagrange_update(0.5_DP * dt) !%%% For shearflow_lagrange
+          call shearflow_running_update(0.5_DP * dt) !%%% For shearflow_lagrange->running
         end if                                        !%%% For shearflow_lagrange
 
         call caldlt_rev( colliflag, ff, phi, Al, hh, dh, cf, ef )
@@ -109,7 +111,7 @@ CONTAINS
 
         call tips_reality ( hh )
 
-        call shearflow_lagrange_dealias(ff, phi, Al, hh) !%%% For shearflow_lagrange
+        !!!call shearflow_lagrange_dealias(ff, phi, Al, hh) !%%% For shearflow_lagrange
 
                                            call clock_sta(12)
                                          ! call fapp_start("esfield",12,1)
@@ -512,7 +514,8 @@ CONTAINS
           do my = ist_y, iend_y
             do mx = -nx, nx
               lf(mx,my,iz,iv) = lf(mx,my,iz,iv)       &
-                 - vl(iv) * cefz(iz) * (              &
+                 !!!- vl(iv) * cefz(iz) * (              &
+                 - (vl(iv) * cefz(iz) - gamma_e /(s_hat_g*12._DP * dpara(iz)))* ( & !%%% For shearflow_lagrange->running
                      -         ff(mx,my,iz+2,iv)      &
                      + 8._DP * ff(mx,my,iz+1,iv)      &
                      - 8._DP * ff(mx,my,iz-1,iv)      &

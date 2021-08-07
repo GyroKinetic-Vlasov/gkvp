@@ -515,7 +515,7 @@ CONTAINS
             do mx = -nx, nx
               lf(mx,my,iz,iv) = lf(mx,my,iz,iv)       &
                  !!!- vl(iv) * cefz(iz) * (              &
-                 - (vl(iv) * cefz(iz) - gamma_e /(s_hat_g*12._DP * dpara(iz)))* ( & !%%% For shearflow_lagrange->running
+                 - (vl(iv) * cefz(iz) - gamma_e /(s_hat_g*12._DP * (zz(0)-zz(-1))))* ( & !%%% For shearflow_lagrange->running
                      -         ff(mx,my,iz+2,iv)      &
                      + 8._DP * ff(mx,my,iz+1,iv)      &
                      - 8._DP * ff(mx,my,iz-1,iv)      &
